@@ -5,16 +5,18 @@ import dev.langchain4j.data.document.DocumentParser;
 import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
 import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
-import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.data.document.splitter.DocumentSplitters;
 import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.prompt.Prompt;
-import dev.langchain4j.data.prompt.PromptTemplate;
+import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
-import dev.langchain4j.model.chat.ChatLanguageModel;
+import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
+import dev.langchain4j.model.input.Prompt;
+import dev.langchain4j.model.input.PromptTemplate;
 import dev.langchain4j.model.output.Response;
+import dev.langchain4j.rag.DefaultRetrievalAugmentor;
 import dev.langchain4j.rag.RetrievalAugmentor;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
@@ -63,7 +65,7 @@ public class TestRoutage {
         configureLogger();
 
         String llmKey = System.getenv("GEMINI_KEY");
-        ChatLanguageModel chatModel = GoogleAiGeminiChatModel.builder()
+        ChatModel chatModel = GoogleAiGeminiChatModel.builder()
                 .apiKey(llmKey)
                 .temperature(0.3)
                 .logRequestsAndResponses(true)
@@ -82,10 +84,10 @@ public class TestRoutage {
                 .build();
 
         class CustomQueryRouter implements QueryRouter {
-            private final ChatLanguageModel chatModel;
+            private final ChatModel chatModel;
             private final ContentRetriever retriever;
 
-            CustomQueryRouter(ChatLanguageModel chatModel, ContentRetriever retriever) {
+            CustomQueryRouter(ChatModel chatModel, ContentRetriever retriever) {
                 this.chatModel = chatModel;
                 this.retriever = retriever;
             }
@@ -97,7 +99,7 @@ public class TestRoutage {
                 );
                 Prompt prompt = promptTemplate.apply(Map.of("query", query.text()));
 
-                Response<AiMessage> response = chatModel.generate(prompt.toUserMessage());
+                Response<AiMessage> response = chatModel.generate(prompt.toMessages());
                 String answer = response.content().text().trim().toLowerCase();
 
                 System.out.println("Routing decision: Query is about AI? -> " + answer);
@@ -112,7 +114,7 @@ public class TestRoutage {
 
         QueryRouter customQueryRouter = new CustomQueryRouter(chatModel, ragRetriever);
 
-        RetrievalAugmentor retrievalAugmentor = RetrievalAugmentor.builder()
+        RetrievalAugmentor retrievalAugmentor = DefaultRetrievalAugmentor.builder()
                 .queryRouter(customQueryRouter)
                 .build();
 
