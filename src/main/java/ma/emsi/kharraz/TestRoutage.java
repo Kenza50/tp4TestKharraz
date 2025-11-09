@@ -4,20 +4,21 @@ import dev.langchain4j.data.document.Document;
 import dev.langchain4j.data.document.DocumentParser;
 import dev.langchain4j.data.document.DocumentSplitter;
 import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
-import dev.langchain4j.data.document.parser.TextDocumentParser;
-import dev.langchain4j.data.document.splitter.DocumentSplitters;
+import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
 import dev.langchain4j.data.segment.TextSegment;
-import dev.langchain4j.memory.ChatMemory;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.prompt.Prompt;
+import dev.langchain4j.data.prompt.PromptTemplate;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
-import dev.langchain4j.model.chat.ChatModel;
+import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.embedding.onnx.allminilml6v2.AllMiniLmL6V2EmbeddingModel;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
-import dev.langchain4j.rag.DefaultRetrievalAugmentor;
+import dev.langchain4j.model.output.Response;
 import dev.langchain4j.rag.RetrievalAugmentor;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
-import dev.langchain4j.rag.query.router.LanguageModelQueryRouter;
+import dev.langchain4j.rag.query.Query;
 import dev.langchain4j.rag.query.router.QueryRouter;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.EmbeddingStore;
@@ -27,10 +28,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Scanner;
+import java.util.*;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -49,7 +47,8 @@ public class TestRoutage {
 
     private static EmbeddingStore<TextSegment> createEmbeddingStore(String resourcePath) {
         Path documentPath = toPath(resourcePath);
-        Document document = loadDocument(documentPath, new TextDocumentParser());
+        DocumentParser documentParser = new ApacheTikaDocumentParser();
+        Document document = loadDocument(documentPath, documentParser);
 
         DocumentSplitter splitter = DocumentSplitters.recursive(300, 0);
         List<TextSegment> segments = splitter.split(document);
@@ -63,43 +62,58 @@ public class TestRoutage {
     public static void main(String[] args) {
         configureLogger();
 
-        // Phase 1: Ingestion
-        EmbeddingStore<TextSegment> iaStore = createEmbeddingStore("ia_content.txt");
-        EmbeddingStore<TextSegment> cuisineStore = createEmbeddingStore("cuisine_content.txt");
-
-        // Phase 2: Retrieval
         String llmKey = System.getenv("GEMINI_KEY");
-        ChatModel chatModel = GoogleAiGeminiChatModel.builder()
+        ChatLanguageModel chatModel = GoogleAiGeminiChatModel.builder()
                 .apiKey(llmKey)
                 .temperature(0.3)
                 .logRequestsAndResponses(true)
-                .modelName("gemini-2.5-flash")
+                .modelName("gemini-1.5-flash")
                 .build();
 
-        EmbeddingModel embeddingModel = new AllMiniLmL6V2EmbeddingModel();
+        // Phase 1: Ingestion
+        EmbeddingStore<TextSegment> ragStore = createEmbeddingStore("rag.pdf");
 
-        ContentRetriever iaRetriever = EmbeddingStoreContentRetriever.builder()
-                .embeddingStore(iaStore)
-                .embeddingModel(embeddingModel)
+        // Phase 2: Retrieval
+        ContentRetriever ragRetriever = EmbeddingStoreContentRetriever.builder()
+                .embeddingStore(ragStore)
+                .embeddingModel(new AllMiniLmL6V2EmbeddingModel())
                 .maxResults(2)
-                .minScore(0.5)
+                .minScore(0.6)
                 .build();
 
-        ContentRetriever cuisineRetriever = EmbeddingStoreContentRetriever.builder()
-                .embeddingStore(cuisineStore)
-                .embeddingModel(embeddingModel)
-                .maxResults(2)
-                .minScore(0.5)
-                .build();
+        class CustomQueryRouter implements QueryRouter {
+            private final ChatLanguageModel chatModel;
+            private final ContentRetriever retriever;
 
-        Map<ContentRetriever, String> retrieverMap = new HashMap<>();
-        retrieverMap.put(iaRetriever, "Contient des informations sur l'intelligence artificielle, le machine learning et les modèles de langage.");
-        retrieverMap.put(cuisineRetriever, "Contient des recettes de cuisine, des ingrédients et des instructions de préparation.");
+            CustomQueryRouter(ChatLanguageModel chatModel, ContentRetriever retriever) {
+                this.chatModel = chatModel;
+                this.retriever = retriever;
+            }
 
-        QueryRouter queryRouter = new LanguageModelQueryRouter(chatModel, retrieverMap);
+            @Override
+            public Collection<ContentRetriever> route(Query query) {
+                PromptTemplate promptTemplate = PromptTemplate.from(
+                        "Est-ce que la requête '{{query}}' porte sur l'IA ? Réponds seulement par 'oui', 'non' ou 'peut-être'."
+                );
+                Prompt prompt = promptTemplate.apply(Map.of("query", query.text()));
 
-        RetrievalAugmentor retrievalAugmentor = DefaultRetrievalAugmentor.builder()
-                .queryRouter(queryRouter)
+                Response<AiMessage> response = chatModel.generate(prompt.toUserMessage());
+                String answer = response.content().text().trim().toLowerCase();
+
+                System.out.println("Routing decision: Query is about AI? -> " + answer);
+
+                if (answer.contains("non")) {
+                    return Collections.emptyList();
+                } else {
+                    return Collections.singletonList(retriever);
+                }
+            }
+        }
+
+        QueryRouter customQueryRouter = new CustomQueryRouter(chatModel, ragRetriever);
+
+        RetrievalAugmentor retrievalAugmentor = RetrievalAugmentor.builder()
+                .queryRouter(customQueryRouter)
                 .build();
 
         // Create Assistant
@@ -110,7 +124,7 @@ public class TestRoutage {
                 .build();
 
         // Start chatting
-        System.out.println("Assistant is ready. Ask your questions about AI or cooking.");
+        System.out.println("Assistant is ready. Ask your questions.");
         Scanner scanner = new Scanner(System.in);
         while (true) {
             System.out.print("User: ");
