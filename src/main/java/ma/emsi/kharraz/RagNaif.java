@@ -28,11 +28,26 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.Scanner;
 
+import java.util.logging.ConsoleHandler;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
 import static dev.langchain4j.data.document.loader.FileSystemDocumentLoader.loadDocument;
 
 public class RagNaif {
 
+    private static void configureLogger() {
+        // Configure le logger sous-jacent (java.util.logging)
+        Logger packageLogger = Logger.getLogger("dev.langchain4j");
+        packageLogger.setLevel(Level.FINE); // Ajuster niveau
+        // Ajouter un handler pour la console pour faire afficher les logs
+        ConsoleHandler handler = new ConsoleHandler();
+        handler.setLevel(Level.FINE);
+        packageLogger.addHandler(handler);
+    }
+
     public static void main(String[] args) {
+        configureLogger();
         // Phase 1: Ingestion pipeline
         // 1. Load document
         Path documentPath = toPath("rag.pdf");
@@ -54,12 +69,13 @@ public class RagNaif {
 
         // Phase 2: Retrieval and generation
         // 5. Create ChatModel and ContentRetriever
+        String llmKey = System.getenv("GEMINI_KEY");
         ChatModel chatModel = GoogleAiGeminiChatModel
                 .builder()
-                .apiKey(System.getenv("GEMINI_KEY"))
+                .apiKey(llmKey)
                 .temperature(0.3)
                 .logRequestsAndResponses(true)
-                .modelName("gemini-2.5-flash")
+                .modelName("gemini-2.5-flash") // Nom du modèle que vous utilisez
                 .build();
 
         ContentRetriever contentRetriever = EmbeddingStoreContentRetriever.builder()
