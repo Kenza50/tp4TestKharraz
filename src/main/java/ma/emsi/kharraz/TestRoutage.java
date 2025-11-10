@@ -69,7 +69,7 @@ public class TestRoutage {
                 .apiKey(llmKey)
                 .temperature(0.3)
                 .logRequestsAndResponses(true)
-                .modelName("gemini-1.5-flash")
+                .modelName("gemini-2.5-flash")
                 .build();
 
         // Phase 1: Ingestion
@@ -99,8 +99,8 @@ public class TestRoutage {
                 );
                 Prompt prompt = promptTemplate.apply(Map.of("query", query.text()));
 
-                Response<AiMessage> response = chatModel.generate(prompt.toMessages());
-                String answer = response.content().text().trim().toLowerCase();
+                // Fixed: Use chat() with string directly
+                String answer = chatModel.chat(prompt.text()).trim().toLowerCase();
 
                 System.out.println("Routing decision: Query is about AI? -> " + answer);
 

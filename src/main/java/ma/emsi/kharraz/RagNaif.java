@@ -75,7 +75,7 @@ public class RagNaif {
                 .apiKey(llmKey)
                 .temperature(0.3)
                 .logRequestsAndResponses(true)
-                .modelName("gemini-2.5-flash") // Nom du modèle que vous utilisez
+                .modelName("gemini-2.5-flash")
                 .build();
 
         ContentRetriever contentRetriever = EmbeddingStoreContentRetriever.builder()
