@@ -17,9 +17,15 @@ import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.output.Response;
 import dev.langchain4j.rag.content.retriever.ContentRetriever;
 import dev.langchain4j.rag.content.retriever.EmbeddingStoreContentRetriever;
+import dev.langchain4j.rag.content.retriever.WebSearchContentRetriever;
+import dev.langchain4j.rag.query.router.DefaultQueryRouter;
+import dev.langchain4j.rag.RetrievalAugmentor;
+import dev.langchain4j.rag.DefaultRetrievalAugmentor;
 import dev.langchain4j.service.AiServices;
 import dev.langchain4j.store.embedding.EmbeddingStore;
 import dev.langchain4j.store.embedding.inmemory.InMemoryEmbeddingStore;
+import dev.langchain4j.web.search.WebSearchEngine;
+import dev.langchain4j.web.search.tavily.TavilyWebSearchEngine;
 
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -75,14 +81,28 @@ public class RagNaif {
                 .apiKey(llmKey)
                 .temperature(0.3)
                 .logRequestsAndResponses(true)
-                .modelName("gemini-2.5-flash") // Nom du modèle que vous utilisez
+                .modelName("gemini-2.5-flash")
                 .build();
 
-        ContentRetriever contentRetriever = EmbeddingStoreContentRetriever.builder()
+        ContentRetriever embeddingStoreContentRetriever = EmbeddingStoreContentRetriever.builder()
                 .embeddingStore(embeddingStore)
                 .embeddingModel(embeddingModel)
                 .maxResults(2)
                 .minScore(0.5)
+                .build();
+
+        WebSearchEngine tavilyWebSearchEngine = TavilyWebSearchEngine.builder()
+                .apiKey(System.getenv("TAVILY_KEY"))
+                .build();
+
+        ContentRetriever webSearchContentRetriever = WebSearchContentRetriever.builder()
+                .webSearchEngine(tavilyWebSearchEngine)
+                .build();
+
+        DefaultQueryRouter queryRouter = new DefaultQueryRouter(embeddingStoreContentRetriever, webSearchContentRetriever);
+
+        RetrievalAugmentor retrievalAugmentor = DefaultRetrievalAugmentor.builder()
+                .queryRouter(queryRouter)
                 .build();
 
         // 6. Create ChatMemory
@@ -91,7 +111,7 @@ public class RagNaif {
         // 7. Create Assistant
         Assistant assistant = AiServices.builder(Assistant.class)
                 .chatModel(chatModel)
-                .contentRetriever(contentRetriever)
+                .retrievalAugmentor(retrievalAugmentor)
                 .chatMemory(chatMemory)
                 .build();
 
@@ -116,7 +136,7 @@ public class RagNaif {
         try {
             URL resourceUrl = RagNaif.class.getClassLoader().getResource(resourceName);
             if (resourceUrl == null) {
-                throw new RuntimeException("Resource not found: " + resourceName);
+                throw new RuntimeException("Resource no found: " + resourceName);
             }
             return Paths.get(resourceUrl.toURI());
         } catch (URISyntaxException e) {
